@@ -1,6 +1,6 @@
 {
   "name": "queuex-sdk",
-  "version": "0.3.3",
+  "version": "0.5.1",
   "description": "A TypeScript-based queue management SDK with Redis support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -29,10 +29,11 @@
     "typescript",
     "job-queue",
     "scheduling",
-    "redis-streams"
+    "redis-streams",
+    "cron"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ashavijit/queuex-sdk.git"
+    "url": "https://github.com/yourusername/queuex.git"
   }
 }

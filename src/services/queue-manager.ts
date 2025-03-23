@@ -3,9 +3,10 @@ import { Job, JobOptions, JobState } from '../models/job';
 import { Queue, QueueOptions } from '../models/queue';
 import { v4 as uuidv4 } from 'uuid';
 import { QueueXEvent } from '../lib';
+import { CronParser } from '../utils/cron-parser';
 
 /**
- * Manages queues and job scheduling with dependency resolution.
+ * Manages queues and job scheduling with dependency resolution and cron support.
  */
 export class QueueManager {
   private storage: RedisStorage;
@@ -35,11 +36,11 @@ export class QueueManager {
       id: uuidv4(),
       queue: queueName,
       data,
-      state: options.dependsOn?.length ? JobState.PENDING : (options.delay ? JobState.DELAYED : JobState.WAITING),
+      state: this.getInitialState(options),
       options: { priority: 'medium', retries: 3, ...options },
       attempts: 0,
       createdAt: Date.now(),
-      scheduledAt: options.delay ? Date.now() + options.delay : undefined,
+      scheduledAt: this.getScheduledAt(options),
       logs: [],
       dependencies: options.dependsOn || [],
       dependents: [],
@@ -62,12 +63,31 @@ export class QueueManager {
 
     try {
       await this.storage.enqueueJob(job);
-      if (options.delay) this.emitEvent('jobDelayed', job);
+      if (options.cron || options.delay) this.emitEvent('jobDelayed', job);
       else if (options.dependsOn?.length) this.emitEvent('jobPending', job);
     } catch (err) {
       throw new Error(`Failed to enqueue job ${job.id}: ${err instanceof Error ? err.message : String(err)}`);
     }
     return job;
+  }
+
+  private getInitialState(options: JobOptions): JobState {
+    if (options.dependsOn?.length) return JobState.PENDING;
+    if (options.delay || options.cron) return JobState.DELAYED;
+    return JobState.WAITING;
+  }
+
+  private getScheduledAt(options: JobOptions): number | undefined {
+    if (options.delay) return Date.now() + options.delay;
+    if (options.cron) {
+      try {
+        const parser = new CronParser(options.cron);
+        return parser.next().getTime();
+      } catch (err) {
+        throw new Error(`Invalid cron expression: ${options.cron} - ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return undefined;
   }
 
   async getJob(queueName: string): Promise<Job | null> {
@@ -121,10 +141,11 @@ export class QueueManager {
 
     try {
       job.options.delay = newDelay;
+      delete job.options.cron;
       job.scheduledAt = Date.now() + newDelay;
       job.state = JobState.DELAYED;
       job.logs.push(`Delay updated to ${newDelay}ms at ${Date.now()}`);
-      await this.storage.enqueueJob(job); // Re-enqueue with updated delay
+      await this.storage.enqueueJob(job);
       this.dependencyGraph.set(jobId, job);
       this.emitEvent('jobDelayed', job);
       return job;
@@ -143,6 +164,15 @@ export class QueueManager {
           job.state = JobState.WAITING;
           await this.storage.enqueueJob(job);
           await this.storage.removeScheduledJob(queue.name, job.id);
+
+          // Reschedule cron jobs
+          if (job.options.cron) {
+            const nextJob = { ...job, id: uuidv4(), state: JobState.DELAYED, scheduledAt: this.getScheduledAt(job.options), attempts: 0, logs: [] };
+            await this.storage.enqueueJob(nextJob);
+            this.dependencyGraph.set(nextJob.id, nextJob);
+            this.emitEvent('jobDelayed', nextJob);
+          }
+
           this.emitEvent('jobReady', job);
           this.dependencyGraph.set(job.id, job);
         }

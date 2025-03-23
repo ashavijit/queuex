@@ -14,6 +14,7 @@ export interface JobOptions {
   delay?: number;
   concurrency?: number;
   dependsOn?: string[];
+  cron?: string; 
 }
 
 export interface Job {

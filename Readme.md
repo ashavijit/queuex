@@ -82,23 +82,27 @@ const queuex = new QueueX({ redisConnection: 'redis://localhost:6379' });
 queuex.createQueue('my-queue');
 
 (async () => {
-  // Enqueue a parent job
   const parentJob = await queuex.enqueue('my-queue', { task: 'Parent Task' });
   console.log(`Parent job ${parentJob.id} scheduled`);
 
-  // Enqueue a dependent job
   const childJob = await queuex.enqueue('my-queue', { task: 'Child Task' }, { dependsOn: [parentJob.id] });
   console.log(`Child job ${childJob.id} scheduled, depends on ${parentJob.id}`);
 
-  // Event listeners
+  const cronJob = await queuex.enqueue('my-queue', { task: 'Cron Task' }, { cron: '*/5 * * * * *' });
+  console.log(`Cron job ${cronJob.id} scheduled to run every 5 seconds`);
+
   queuex.on('jobPending', (job) => console.log(`Job ${job.id} is pending`));
   queuex.on('jobReady', (job) => console.log(`Job ${job.id} is ready`));
+  queuex.on('jobDelayed', (job) => console.log(`Job ${job.id} is delayed until ${new Date(job.scheduledAt!).toISOString()}`));
   queuex.on('jobCompleted', (job) => console.log(`Job ${job.id} completed: ${job.data.task}`));
 
-  // Start worker
   queuex.startWorker('my-queue', async (job) => {
     return `Processed ${job.data.task}`;
   });
+
+  await new Promise((resolve) => setTimeout(resolve, 15000)); // Run for 15 seconds
+  console.log('Shutting down...');
+  await queuex.shutdown();
 })();
 ```
 
