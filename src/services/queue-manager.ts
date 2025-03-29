@@ -6,7 +6,37 @@ import { QueueXEvent } from '../lib';
 import { CronParser } from '../utils/cron-parser';
 
 /**
- * Manages queues and job scheduling with dependency resolution and cron support.
+ * Manages queues and job scheduling with dependency resolution, cron support, and job chaining.
+ * 
+ * Features:
+ * - Queue management and job scheduling
+ * - Dependency resolution between jobs
+ * - Cron-based job scheduling
+ * - Job chaining with context passing
+ * - Concurrent job processing
+ * 
+ * Example:
+ * ```typescript
+ * // Create a queue manager
+ * const queueManager = new QueueManager(redisUrl, emitEvent);
+ * 
+ * // Create a queue
+ * await queueManager.createQueue('myQueue', { maxConcurrency: 5 });
+ * 
+ * // Enqueue a job with chaining
+ * await queueManager.enqueue('myQueue', initialData, {
+ *   chain: [
+ *     {
+ *       data: { step: 1 },
+ *       options: { priority: 'high' }
+ *     },
+ *     {
+ *       data: { step: 2 },
+ *       options: { retries: 5 }
+ *     }
+ *   ]
+ * });
+ * ```
  */
 export class QueueManager {
   private storage: RedisStorage;
@@ -22,12 +52,46 @@ export class QueueManager {
     this.processOverdueJobs().catch((err) => console.error('Overdue job processing failed:', err));
   }
 
-  createQueue(name: string, options: QueueOptions = {}): Queue {
-    const queue: Queue = { name, options };
+  /**
+   * Creates a new queue with the specified options.
+   * @param name - Name of the queue
+   * @param options - Queue configuration options
+   * @throws Error if queue already exists
+   */
+  async createQueue(name: string, options: QueueOptions = {}): Promise<void> {
+    if (this.queues.has(name)) {
+      throw new Error(`Queue ${name} already exists`);
+    }
+
+    const queue: Queue = {
+      name,
+      options: {
+        maxConcurrency: 1,
+        ...options,
+      },
+    };
+
     this.queues.set(name, queue);
-    return queue;
   }
 
+  /**
+   * Enqueues a job with optional chaining and dependencies.
+   * 
+   * Job Chaining:
+   * - The chain option allows defining subsequent jobs that will execute after the current job
+   * - Each job in the chain receives the result of the previous job as context
+   * - Chain jobs inherit the queue of the parent job
+   * 
+   * Dependencies:
+   * - Jobs can depend on other jobs using dependsOn
+   * - A job will only start when all its dependencies are completed
+   * 
+   * @param queueName - Name of the queue to enqueue the job in
+   * @param data - Job data payload
+   * @param options - Job configuration including chain and dependencies
+   * @returns The created job
+   * @throws Error if queue doesn't exist or if dependency jobs don't exist
+   */
   async enqueue(queueName: string, data: any, options: JobOptions = {}): Promise<Job> {
     const queue = this.queues.get(queueName);
     if (!queue) throw new Error(`Queue ${queueName} not found`);
@@ -37,7 +101,12 @@ export class QueueManager {
       queue: queueName,
       data,
       state: this.getInitialState(options),
-      options: { priority: 'medium', retries: 3, ...options },
+      options: { 
+        priority: 'medium', 
+        retries: 3, 
+        ...options,
+        chain: undefined // Remove chain from options to prevent it from being passed to child jobs
+      },
       attempts: 0,
       createdAt: Date.now(),
       scheduledAt: this.getScheduledAt(options),
@@ -71,25 +140,13 @@ export class QueueManager {
     return job;
   }
 
-  private getInitialState(options: JobOptions): JobState {
-    if (options.dependsOn?.length) return JobState.PENDING;
-    if (options.delay || options.cron) return JobState.DELAYED;
-    return JobState.WAITING;
-  }
-
-  private getScheduledAt(options: JobOptions): number | undefined {
-    if (options.delay) return Date.now() + options.delay;
-    if (options.cron) {
-      try {
-        const parser = new CronParser(options.cron);
-        return parser.next().getTime();
-      } catch (err) {
-        throw new Error(`Invalid cron expression: ${options.cron} - ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    return undefined;
-  }
-
+  /**
+   * Gets the next available job from the queue.
+   * Handles dependency resolution and job state transitions.
+   * 
+   * @param queueName - Name of the queue to get job from
+   * @returns The next available job or null if no jobs are available
+   */
   async getJob(queueName: string): Promise<Job | null> {
     try {
       const job = await this.storage.getNextJob(queueName);
@@ -114,10 +171,20 @@ export class QueueManager {
     }
   }
 
+  /**
+   * Retrieves a job by its ID from the dependency graph.
+   * @param jobId - ID of the job to retrieve
+   * @returns The job if found, undefined otherwise
+   */
   getJobById(jobId: string): Job | undefined {
     return this.dependencyGraph.get(jobId);
   }
 
+  /**
+   * Unschedules a delayed job and marks it as failed.
+   * @param jobId - ID of the job to unschedule
+   * @throws Error if job doesn't exist or is not in DELAYED state
+   */
   async unscheduleJob(jobId: string): Promise<void> {
     const job = this.dependencyGraph.get(jobId);
     if (!job) throw new Error(`Job ${jobId} not found`);
@@ -132,6 +199,13 @@ export class QueueManager {
     }
   }
 
+  /**
+   * Updates the delay of a delayed or pending job.
+   * @param jobId - ID of the job to update
+   * @param newDelay - New delay in milliseconds
+   * @returns The updated job
+   * @throws Error if job doesn't exist or is not in DELAYED/PENDING state
+   */
   async updateJobDelay(jobId: string, newDelay: number): Promise<Job> {
     const job = this.dependencyGraph.get(jobId);
     if (!job) throw new Error(`Job ${jobId} not found`);
@@ -154,6 +228,40 @@ export class QueueManager {
     }
   }
 
+  /**
+   * Determines the initial state of a job based on its options.
+   * @param options - Job options
+   * @returns The initial job state
+   */
+  private getInitialState(options: JobOptions): JobState {
+    if (options.dependsOn?.length) return JobState.PENDING;
+    if (options.delay || options.cron) return JobState.DELAYED;
+    return JobState.WAITING;
+  }
+
+  /**
+   * Calculates the scheduled execution time for a job based on its options.
+   * @param options - Job options
+   * @returns The scheduled timestamp or undefined if not scheduled
+   * @throws Error if cron expression is invalid
+   */
+  private getScheduledAt(options: JobOptions): number | undefined {
+    if (options.delay) return Date.now() + options.delay;
+    if (options.cron) {
+      try {
+        const parser = new CronParser(options.cron);
+        return parser.next().getTime();
+      } catch (err) {
+        throw new Error(`Invalid cron expression: ${options.cron} - ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Processes overdue jobs from all queues.
+   * Handles both delayed and cron jobs.
+   */
   private async processOverdueJobs(): Promise<void> {
     for (const queue of this.queues.values()) {
       const now = Date.now();
