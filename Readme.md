@@ -1,4 +1,3 @@
-
 # QueueX SDK
 
 A lightweight, TypeScript-based queue management SDK with Redis support for job scheduling, dependency resolution, and event logging.
@@ -157,6 +156,67 @@ queuex.on('jobCompleted', (job) => console.log(`Job ${job.id} completed`));
 const logs = await queuex.getEvents(job.id);
 console.log('Job logs:', logs);
 ```
+
+## Job Chaining
+
+QueueX supports sequential job chaining, allowing you to create a series of jobs where each job triggers the next upon completion. Results from previous jobs are automatically passed to subsequent jobs via a context field.
+
+### Features
+- Define chains of jobs that execute sequentially
+- Automatic result passing between chained jobs
+- Individual configuration for each job in the chain
+- Chain-specific error handling
+
+### Usage Example
+
+```typescript
+// Create a chain of jobs
+await queueX.enqueue('transcodeQueue', { videoId: '123' }, {
+  chain: [
+    {
+      // First job in chain: Compress video
+      data: { 
+        action: 'compress',
+        quality: 'high'
+      },
+      options: { 
+        priority: 'high',
+        retries: 3
+      }
+    },
+    {
+      // Second job in chain: Generate thumbnails
+      data: { 
+        action: 'thumbnails',
+        count: 5
+      },
+      options: { 
+        retries: 2
+      }
+    }
+  ]
+});
+
+// Access previous job's result in the processor
+const processor = async (job: Job) => {
+  if (job.context) {
+    // Use the result from the previous job
+    console.log('Previous job result:', job.context);
+  }
+  // Process current job...
+};
+```
+
+### Chain Configuration
+
+Each job in the chain can have its own:
+- Data payload
+- Priority level
+- Retry settings
+- Delay timing
+- Other job options (except chaining)
+
+The `context` field automatically contains the result of the previous job in the chain.
 
 ## Troubleshooting
 - **SyntaxError: Cannot use import statement outside a module**:

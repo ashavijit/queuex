@@ -1,6 +1,6 @@
 {
   "name": "queuex-sdk",
-  "version": "0.9.1",
+  "version": "0.9.5",
   "description": "A TypeScript-based queue management SDK with Redis support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

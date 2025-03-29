@@ -31,8 +31,16 @@ export class QueueX {
     }
   }
 
-  createQueue(name: string, options: QueueOptions = {}): Queue {
-    return this.queueManager.createQueue(name, options);
+  async createQueue(name: string, options: QueueOptions = {}): Promise<Queue> {
+    await this.queueManager.createQueue(name, options);
+    const queue: Queue = {
+      name,
+      options: {
+        maxConcurrency: 1,
+        ...options,
+      },
+    };
+    return queue;
   }
 
   async enqueue(queueName: string, data: any, options: JobOptions = {}): Promise<Job> {
