@@ -1,233 +1,267 @@
-# QueueX SDK
+# QueueX 🚀
 
-A lightweight, TypeScript-based queue management SDK with Redis support for job scheduling, dependency resolution, and event logging.
+A powerful, feature-rich job queue system for Node.js with advanced retry strategies, job chaining, and intelligent job processing.
 
+[![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
+[![Redis](https://img.shields.io/badge/Redis-Required-red.svg)](https://redis.io/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![NPM Version](https://img.shields.io/npm/v/queuex-sdk)](https://www.npmjs.com/package/queuex-sdk)
 
-## Features
-- Schedule jobs with configurable delays
-- Update or unschedule delayed jobs
-- Dependency resolution for job execution (DAG)
-- Event logging using Redis Streams
-- Persistence across restarts
+## ✨ Features
 
-## Prerequisites
-- **Node.js**: v20.11.1 or higher
-- **Redis**: Running on `redis://localhost:6379` (default)
-- **NPM**: For package installation
+- 🔄 **Advanced Retry Strategies**
+  - Exponential, Linear, and Fixed backoff
+  - Configurable delays and attempts
+  - Maximum retry limit
 
-## Installation
-Install the package via NPM:
+- ⏱️ **Smart Job Processing**
+  - Job timeout handling
+  - Time-to-live (TTL) support
+  - Multiple queue processing strategies
+  - Concurrent job execution
+
+- 🔗 **Job Dependencies & Chaining**
+  - Sequential job execution
+  - Result passing between jobs
+  - Complex workflow support
+  - Dependency graph management
+
+- 📊 **Queue Management**
+  - FIFO/LIFO processing
+  - Priority queues
+  - Round-robin distribution
+  - Rate limiting
+
+## 🚀 Quick Start
 
 ```bash
-npm i queuex-sdk
+npm install queuex-sdk
 ```
 
-## Usage
-### Basic Example
-Create a script to use the SDK in your Node.js project:
-
-1. Initialize a new project (if not already done):
-   ```bash
-   mkdir my-project
-   cd my-project
-   npm init -y
-   npm i queuex-sdk
-   ```
-
-2. Create `index.js`:
-   ```javascript
-   import { QueueX } from 'queuex-sdk';
-
-   const queuex = new QueueX({ redisConnection: 'redis://localhost:6379' });
-   queuex.createQueue('my-queue');
-
-   (async () => {
-     const job = await queuex.enqueue('my-queue', { task: 'Hello' }, { delay: 2000 });
-     console.log(`Job ${job.id} scheduled`);
-
-     queuex.on('jobCompleted', (job) => console.log(`Job ${job.id} completed`));
-     queuex.startWorker('my-queue', async (job) => `Processed ${job.data.task}`);
-   })();
-   ```
-
-3. Update `package.json` to use ES Modules:
-   ```json
-   {
-     "name": "my-project",
-     "version": "1.0.0",
-     "type": "module",
-     "dependencies": {
-       "queuex-sdk": "^0.2.0"
-     },
-     "scripts": {
-       "start": "node index.js"
-     }
-   }
-   ```
-
-4. Run the script:
-   ```bash
-   npm start
-   ```
-
-### Dependency Scheduling Example
-Schedule jobs where one depends on another:
-
-```javascript
+```typescript
 import { QueueX } from 'queuex-sdk';
 
-const queuex = new QueueX({ redisConnection: 'redis://localhost:6379' });
-queuex.createQueue('my-queue');
+// Initialize QueueX
+const queuex = new QueueX({ 
+  redisConnection: 'redis://localhost:6379' 
+});
 
-(async () => {
-  const parentJob = await queuex.enqueue('my-queue', { task: 'Parent Task' });
-  console.log(`Parent job ${parentJob.id} scheduled`);
+// Create a queue
+await queuex.createQueue('emailQueue', { 
+  maxConcurrency: 5 
+});
 
-  const childJob = await queuex.enqueue('my-queue', { task: 'Child Task' }, { dependsOn: [parentJob.id] });
-  console.log(`Child job ${childJob.id} scheduled, depends on ${parentJob.id}`);
+// Add a job with retry strategy
+await queuex.enqueue('emailQueue', 
+  { to: 'user@example.com', subject: 'Welcome!' },
+  {
+    retries: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000,
+      maxDelay: 30000
+    }
+  }
+);
 
-  const cronJob = await queuex.enqueue('my-queue', { task: 'Cron Task' }, { cron: '*/5 * * * * *' });
-  console.log(`Cron job ${cronJob.id} scheduled to run every 5 seconds`);
-
-  queuex.on('jobPending', (job) => console.log(`Job ${job.id} is pending`));
-  queuex.on('jobReady', (job) => console.log(`Job ${job.id} is ready`));
-  queuex.on('jobDelayed', (job) => console.log(`Job ${job.id} is delayed until ${new Date(job.scheduledAt!).toISOString()}`));
-  queuex.on('jobCompleted', (job) => console.log(`Job ${job.id} completed: ${job.data.task}`));
-
-  queuex.startWorker('my-queue', async (job) => {
-    return `Processed ${job.data.task}`;
-  });
-
-  await new Promise((resolve) => setTimeout(resolve, 15000)); // Run for 15 seconds
-  console.log('Shutting down...');
-  await queuex.shutdown();
-})();
+// Process jobs
+queuex.startWorker('emailQueue', async (job) => {
+  await sendEmail(job.data);
+  return { sent: true };
+});
 ```
 
-**Explanation**:
-- `parentJob` runs immediately (no delay).
-- `childJob` waits until `parentJob` completes due to `dependsOn: [parentJob.id]`.
-- The worker processes `parentJob` first, then `childJob` once dependencies are resolved.
+## 🔥 Advanced Features
 
-**Output** (example):
-```
-Parent job <parent-id> scheduled
-Child job <child-id> scheduled, depends on <parent-id>
-Job <child-id> is pending
-Job <parent-id> completed: Parent Task
-Job <child-id> is ready
-Job <child-id> completed: Child Task
-```
+### Retry Strategies
 
-### Running with Redis
-Ensure Redis is running:
-```bash
-redis-server
-```
+```typescript
+// Exponential Backoff
+await queuex.enqueue('queue', data, {
+  retries: 5,
+  backoff: { 
+    type: 'exponential', 
+    delay: 1000,
+    maxDelay: 60000 
+  }
+});
 
-## API Examples
-### Schedule a Job
-```javascript
-const job = await queuex.enqueue('my-queue', { task: 'Test' }, { delay: 5000 });
-console.log(`Scheduled job ${job.id}`);
-```
+// Linear Backoff
+await queuex.enqueue('queue', data, {
+  retries: 3,
+  backoff: { 
+    type: 'linear', 
+    delay: 5000 
+  }
+});
 
-### Update Delay
-```javascript
-await queuex.updateJobDelay(job.id, 10000);
-console.log(`Updated delay for job ${job.id}`);
-```
-
-### Unschedule a Job
-```javascript
-await queuex.unscheduleJob(job.id);
-console.log(`Unscheduling job ${job.id}`);
+// Fixed Delay
+await queuex.enqueue('queue', data, {
+  retries: 2,
+  backoff: { 
+    type: 'fixed', 
+    delay: 10000 
+  }
+});
 ```
 
-### Listen to Events
-```javascript
-queuex.on('jobDelayed', (job) => console.log(`Job ${job.id} delayed`));
-queuex.on('jobCompleted', (job) => console.log(`Job ${job.id} completed`));
+### Job Timeouts & TTL
+
+```typescript
+// Job with timeout
+await queuex.enqueue('queue', data, {
+  timeout: 5000  // 5 seconds timeout
+});
+
+// Job with TTL
+await queuex.enqueue('queue', data, {
+  ttl: 3600000  // 1 hour TTL
+});
+
+// Combined options
+await queuex.enqueue('queue', data, {
+  timeout: 5000,
+  ttl: 3600000,
+  retries: 3,
+  backoff: { type: 'exponential', delay: 1000 }
+});
 ```
 
-### Get Job Logs
-```javascript
-const logs = await queuex.getEvents(job.id);
-console.log('Job logs:', logs);
-```
-
-## Job Chaining
-
-QueueX supports sequential job chaining, allowing you to create a series of jobs where each job triggers the next upon completion. Results from previous jobs are automatically passed to subsequent jobs via a context field.
-
-### Features
-- Define chains of jobs that execute sequentially
-- Automatic result passing between chained jobs
-- Individual configuration for each job in the chain
-- Chain-specific error handling
-
-### Usage Example
+### Job Chaining
 
 ```typescript
 // Create a chain of jobs
-await queueX.enqueue('transcodeQueue', { videoId: '123' }, {
+await queuex.enqueue('videoQueue', { videoId: '123' }, {
   chain: [
     {
-      // First job in chain: Compress video
-      data: { 
-        action: 'compress',
-        quality: 'high'
-      },
+      data: { step: 'compress' },
       options: { 
         priority: 'high',
-        retries: 3
+        timeout: 300000 
       }
     },
     {
-      // Second job in chain: Generate thumbnails
-      data: { 
-        action: 'thumbnails',
-        count: 5
-      },
+      data: { step: 'thumbnail' },
       options: { 
-        retries: 2
+        retries: 2,
+        backoff: { type: 'linear', delay: 5000 }
       }
     }
   ]
 });
 
-// Access previous job's result in the processor
-const processor = async (job: Job) => {
+// Access previous job's result
+queuex.startWorker('videoQueue', async (job) => {
   if (job.context) {
-    // Use the result from the previous job
     console.log('Previous job result:', job.context);
   }
   // Process current job...
-};
+});
 ```
 
-### Chain Configuration
+### Queue Processing Strategies
 
-Each job in the chain can have its own:
-- Data payload
-- Priority level
-- Retry settings
-- Delay timing
-- Other job options (except chaining)
+```typescript
+// FIFO Queue (default)
+await queuex.createQueue('fifoQueue', { 
+  strategy: QueueStrategy.FIFO 
+});
 
-The `context` field automatically contains the result of the previous job in the chain.
+// LIFO Queue
+await queuex.createQueue('lifoQueue', { 
+  strategy: QueueStrategy.LIFO 
+});
 
-## Troubleshooting
-- **SyntaxError: Cannot use import statement outside a module**:
-  - Add `"type": "module"` to your `package.json` or use `require`:
-    ```javascript
-    const { QueueX } = require('queuex-sdk');
-    ```
-- **Redis Connection Error**:
-  - Ensure Redis is running on `localhost:6379` or update the connection string.
-- **Module Not Found**:
-  - Verify installation: `npm i queuex-sdk`.
+// Priority Queue
+await queuex.createQueue('priorityQueue', { 
+  strategy: QueueStrategy.PRIORITY 
+});
 
-## License
-MIT
+// Round Robin Queue
+await queuex.createQueue('roundRobinQueue', { 
+  strategy: QueueStrategy.ROUND_ROBIN 
+});
+```
+
+## 📊 Event Handling
+
+```typescript
+queuex.on('jobStarted', (job) => {
+  console.log(`Job ${job.id} started`);
+});
+
+queuex.on('jobCompleted', (job) => {
+  console.log(`Job ${job.id} completed`);
+});
+
+queuex.on('jobFailed', (job) => {
+  console.error(`Job ${job.id} failed:`, job.logs);
+});
+
+queuex.on('jobDelayed', (job) => {
+  console.log(`Job ${job.id} delayed until:`, 
+    new Date(job.scheduledAt!).toISOString()
+  );
+});
+```
+
+## 🔧 Configuration Options
+
+### Job Options
+```typescript
+interface JobOptions {
+  priority?: 'high' | 'medium' | 'low';
+  retries?: number;
+  backoff?: {
+    type: 'exponential' | 'linear' | 'fixed';
+    delay: number;
+    maxDelay?: number;
+  };
+  timeout?: number;
+  ttl?: number;
+  delay?: number;
+  concurrency?: number;
+  dependsOn?: string[];
+  cron?: string;
+  chain?: Array<{
+    data: any;
+    options?: JobOptions;
+  }>;
+}
+```
+
+### Queue Options
+```typescript
+interface QueueOptions {
+  maxConcurrency?: number;
+  strategy?: QueueStrategy;
+  rateLimit?: {
+    max: number;
+    interval: number;
+  };
+}
+```
+
+## 📚 Best Practices
+
+1. **Retry Strategies**
+   - Use exponential backoff for network operations
+   - Use linear backoff for resource-intensive tasks
+   - Use fixed delay for scheduled retries
+
+2. **Timeouts & TTL**
+   - Set reasonable timeouts based on operation type
+   - Use TTL for time-sensitive tasks
+   - Consider queue processing time in TTL calculations
+
+3. **Job Chaining**
+   - Keep chains focused and minimal
+   - Handle errors appropriately in each step
+   - Use context passing judiciously
+
+4. **Queue Strategies**
+   - Use FIFO for standard operations
+   - Use LIFO for real-time updates
+   - Use Priority for important tasks
+   - Use Round Robin for fair resource distribution
+
